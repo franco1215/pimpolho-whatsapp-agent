@@ -33,7 +33,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch --env-file=.env ./src",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "volt": "volt"
   },
   "type": "module"

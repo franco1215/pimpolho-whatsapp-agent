@@ -24,7 +24,12 @@ RUN npm run build
 FROM node:22-alpine
 
 # Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+# Install Chromium and dependencies for Playwright MCP
+RUN apk add --no-cache dumb-init chromium nss freetype harfbuzz ca-certificates ttf-freefont
+
+# Set Playwright to use system Chromium
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs
@@ -46,8 +51,14 @@ RUN if [ -f yarn.lock ]; then yarn install --frozen-lockfile --production; \
 # Copy built application from builder stage
 COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
 
+# Copy lib directory (supabase client used at runtime)
+COPY --from=builder --chown=nodejs:nodejs /app/lib ./lib
+
 # Copy .env file if it exists (dotenv will read it automatically)
 COPY --chown=nodejs:nodejs .env* ./
+
+# Create files directory for filesystem MCP
+RUN mkdir -p /tmp/pimpolho-files && chown nodejs:nodejs /tmp/pimpolho-files
 
 # Switch to non-root user
 USER nodejs
@@ -59,4 +70,4 @@ EXPOSE 3141
 ENTRYPOINT ["dumb-init", "--"]
 
 # Start the application (dotenv/config is already imported in the code)
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/src/index.js"]

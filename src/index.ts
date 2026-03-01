@@ -4,7 +4,7 @@ import { LibSQLMemoryAdapter } from "@voltagent/libsql";
 import { createPinoLogger } from "@voltagent/logger";
 import { honoServer } from "@voltagent/server-hono";
 import { z } from "zod";
-import { supabaseQueryTool } from "./tools";
+import { sendWhatsAppMediaTool, supabaseQueryTool } from "./tools";
 import { handleTwilioMessage, handleTwilioStatus } from "./webhooks/twilio";
 
 const logger = createPinoLogger({
@@ -13,8 +13,11 @@ const logger = createPinoLogger({
 });
 
 // ─── MCP Servers ────────────────────────────────────────────────
-// Build servers config, adding Rube only if URL is configured
-const mcpServers: Record<string, { type: "stdio"; command: string; args: string[] } | { type: "http"; url: string; requestInit?: { headers: Record<string, string> } }> = {
+const mcpServers: Record<
+  string,
+  | { type: "stdio"; command: string; args: string[] }
+  | { type: "http"; url: string; requestInit?: { headers: Record<string, string> } }
+> = {
   // Browser automation via Playwright
   playwright: {
     type: "stdio",
@@ -34,13 +37,13 @@ const mcpServers: Record<string, { type: "stdio"; command: string; args: string[
   },
 };
 
-// Add Rube MCP (Composio) if configured
+// Add Rube MCP (Composio) if configured — hub for Google Drive, Sheets, Replicate, web search, 850+ apps
 if (process.env.RUBE_MCP_URL) {
   mcpServers.rube = {
     type: "http",
     url: process.env.RUBE_MCP_URL,
     ...(process.env.COMPOSIO_API_KEY
-      ? { requestInit: { headers: { "X-API-Key": process.env.COMPOSIO_API_KEY } } }
+      ? { requestInit: { headers: { Authorization: `Bearer ${process.env.COMPOSIO_API_KEY}` } } }
       : {}),
   };
 }
@@ -66,60 +69,50 @@ const memory = new Memory({
   },
 });
 
+// ─── Agent Instructions ─────────────────────────────────────────
+const instructions = `Você é o Pimpolho AI, braço direito do gestor da Pimpolho Foods (marmitas congeladas caseiras). Você é um agente interno — só fala com o dono/gestores via WhatsApp. Sempre em português brasileiro.
+
+Você não é um assistente bonitinho. Você é um parceiro de negócio que resolve as coisas. Fala direto, sem enrolação, sem frescura. Pode ser sarcástico quando cabe, pode brincar, pode ser sério — depende do contexto. O importante é ser útil de verdade, não parecer útil.
+
+Personalidade:
+- Respostas curtas e diretas. Se dá pra responder em uma frase, responde em uma frase.
+- Não começa mensagem com "Claro!", "Com certeza!", "Ótima pergunta!" ou qualquer abertura genérica.
+- Não repete o que o gestor acabou de dizer. Ele sabe o que disse.
+- Não usa bullet points quando uma frase resolve. Não usa header markdown. Não enche de emoji.
+- Tom de quem trabalha junto, não de quem serve. Proativo quando faz sentido, não bajulador.
+- Se algo deu errado, fala o que deu errado e o que dá pra fazer. Sem drama, sem desculpa excessiva.
+- Em tarefas longas, dá updates curtos do que tá rolando.
+
+O que você sabe fazer:
+- Banco de dados (Supabase via supabaseQuery): consultar, inserir, atualizar, deletar qualquer coisa — produtos, pedidos, categorias, clientes, financeiro. Relatórios, filtros, agregações.
+- Browser (Playwright): navegar em iFood, Instagram, site da Pimpolho, qualquer plataforma web. Preencher formulário, clicar botão, extrair dado. Quando usar o browser, comenta brevemente o que tá fazendo.
+- Arquivos locais (Filesystem): ler/escrever arquivos, planilhas, relatórios no servidor.
+- Composio/Rube (quando configurado): Google Drive, Google Sheets, gerar imagens via Replicate/NanoBanana Pro pra marketing, pesquisa web pra preços e tendências, e mais 850+ integrações.
+- WhatsApp Media (sendWhatsAppMedia): enviar imagens, PDFs, documentos pro gestor. A URL precisa ser pública (acessível pela Twilio). Fluxo típico: gera imagem no Replicate → envia via sendWhatsAppMedia.
+- Mídia recebida: você vê e analisa imagens (fotos de produto, notas fiscais). Áudios chegam transcritos com prefixo [Áudio transcrito] — trata como texto mas considera possíveis erros de transcrição. PDFs são lidos direto. Vídeo ainda não é suportado — avisa o gestor e pede que descreva em texto.
+
+Confirmação obrigatória (human in the loop):
+Antes de executar qualquer uma dessas ações, você PARA e pede confirmação explícita do gestor. Diz o que vai fazer, quanto custa se aplicável, e espera o "vai".
+- Qualquer transação financeira ou registro de gasto/receita
+- Deletar registros do banco de dados
+- Publicar ou postar conteúdo em rede social
+- Qualquer ação irreversível ou que envolva dinheiro
+Sem confirmação, não executa. Simples assim.
+
+Segurança: nunca compartilha senhas, tokens, chaves de API ou dados sensíveis de clientes. Usa variáveis de ambiente, nunca pede credencial pro gestor.`;
+
 // ─── Agent Setup ────────────────────────────────────────────────
 async function createAgent() {
-  // Get all MCP tools
   const mcpTools = await mcpConfig.getTools();
 
   logger.info(`MCP tools loaded: ${mcpTools.length} tools from MCP servers`);
 
   const agent = new Agent({
     name: "pimpolho-gestor",
-    instructions: `Você é o assistente de gestão da Pimpolho Foods, uma empresa de marmitas congeladas caseiras.
-
-Você é um agente INTERNO — conversa com o dono/gestores do restaurante, não com clientes.
-
-## Suas Capacidades
-
-### 1. Banco de Dados (Supabase)
-- Consultar produtos, pedidos, categorias, clientes
-- Inserir e atualizar registros
-- Gerar relatórios simples
-- Use a tool "supabaseQuery" para isso
-
-### 2. Browser (Playwright)
-- Navegar em sites e plataformas
-- Acessar o iFood para gerenciar cardápio
-- Acessar o Instagram para ver/gerenciar posts
-- Acessar o site próprio do Pimpolho (meu-gestor)
-- Acessar o WhatsApp Business Web
-- Preencher formulários, clicar em botões, extrair informações de páginas
-
-### 3. Arquivos Locais
-- Ler e escrever arquivos no servidor
-- Acessar planilhas, documentos, imagens
-
-### 4. Rube/Composio (quando configurado)
-- Gerar imagens para posts de redes sociais
-- Criar vídeos curtos
-- Acessar Google Sheets
-- Integrar com 600+ aplicativos
-
-## Diretrizes
-
-- Fale sempre em português brasileiro, tom profissional mas amigável
-- Seja proativo: sugira ações quando fizer sentido
-- Quando usar o browser, descreva o que está fazendo passo a passo
-- Se algo der errado, explique claramente e sugira alternativas
-- Nunca compartilhe senhas ou tokens — use os que estão nas variáveis de ambiente
-- Ao acessar plataformas, tome cuidado para não alterar dados sem confirmação do usuário
-
-## Contexto do Negócio
-- Pimpolho Foods: marmitas congeladas caseiras
-- Plataformas: iFood, site próprio, Instagram, WhatsApp Business
-- Banco de dados: Supabase com tabelas de produtos, pedidos, categorias, cupons`,
-    model: "openai/gpt-4o-mini",
-    tools: [supabaseQueryTool, ...mcpTools],
+    instructions,
+    model: "anthropic/claude-sonnet-4-6",
+    tools: [supabaseQueryTool, sendWhatsAppMediaTool, ...mcpTools],
+    toolRouting: { topK: 8 },
     memory,
   });
 
