@@ -59,7 +59,7 @@ const workingMemorySchema = z.object({
 
 const memory = new Memory({
   storage: new LibSQLMemoryAdapter({
-    url: "file:./.voltagent/memory.db",
+    url: "file:/tmp/pimpolho-files/.voltagent/memory.db",
     logger: logger.child({ component: "libsql" }),
   }),
   workingMemory: {
