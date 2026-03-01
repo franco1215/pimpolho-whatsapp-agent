@@ -36,5 +36,5 @@
     "start": "node dist/src/index.js",
     "volt": "volt"
   },
-  "type": "module"
+  "type": "commonjs"
 }
