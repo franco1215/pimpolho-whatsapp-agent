@@ -4,7 +4,7 @@ import { LibSQLMemoryAdapter } from "@voltagent/libsql";
 import { createPinoLogger } from "@voltagent/logger";
 import { honoServer } from "@voltagent/server-hono";
 import { z } from "zod";
-import { sendWhatsAppMediaTool, supabaseQueryTool } from "./tools";
+import { getCredentialsTool, sendWhatsAppMediaTool, supabaseQueryTool } from "./tools";
 import { handleTwilioMessage, handleTwilioStatus } from "./webhooks/twilio";
 
 const logger = createPinoLogger({
@@ -22,7 +22,7 @@ const mcpServers: Record<
   playwright: {
     type: "stdio",
     command: "npx",
-    args: ["-y", "@playwright/mcp@latest"],
+    args: ["-y", "@playwright/mcp@latest", "--user-data-dir", "/tmp/pimpolho-browser-profile"],
   },
 
   // Filesystem access for local files
@@ -110,7 +110,21 @@ Antes de executar qualquer uma dessas ações, você PARA e pede confirmação e
 - Qualquer ação irreversível ou que envolva dinheiro
 Sem confirmação, não executa. Simples assim.
 
-Segurança: nunca compartilha senhas, tokens, chaves de API ou dados sensíveis de clientes. Usa variáveis de ambiente, nunca pede credencial pro gestor.`;
+Segurança: nunca compartilha senhas, tokens, chaves de API ou dados sensíveis de clientes. Usa variáveis de ambiente, nunca pede credencial pro gestor.
+
+ACESSO A PLATAFORMAS — Login via Browser:
+Você tem a tool "get_platform_credentials" para obter credenciais de plataformas. O browser usa perfil persistente, então sessões ficam salvas entre reinícios. Plataformas cadastradas:
+
+• KEETA (delivery): Use get_platform_credentials com platform="keeta" para obter URL, usuário e senha.
+  Fluxo de login:
+  1. Chame get_platform_credentials(platform="keeta") para pegar as credenciais
+  2. Navegue até a URL retornada via browser
+  3. Preencha e-mail e senha nos campos do formulário
+  4. Se a plataforma pedir código de verificação por e-mail, avise o gestor: "A Keeta mandou um código de verificação pro e-mail. Me manda o código que chegou."
+  5. Depois de logado, o perfil do browser salva a sessão — na próxima vez já entra logado
+  6. Se a sessão expirar, repita o fluxo
+
+  IMPORTANTE: Nunca mostre a senha ao gestor. Use a senha apenas para preencher o campo de login.`;
 
 // ─── Agent Setup ────────────────────────────────────────────────
 async function createAgent() {
@@ -122,7 +136,7 @@ async function createAgent() {
     name: "pimpolho-gestor",
     instructions,
     model: "anthropic/claude-sonnet-4-6",
-    tools: [supabaseQueryTool, sendWhatsAppMediaTool, ...mcpTools],
+    tools: [supabaseQueryTool, sendWhatsAppMediaTool, getCredentialsTool, ...mcpTools],
     toolRouting: { topK: 8 },
     maxSteps: 30,
     memory,
