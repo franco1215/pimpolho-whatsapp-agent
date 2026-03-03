@@ -135,10 +135,10 @@ async function createAgent() {
   const agent = new Agent({
     name: "pimpolho-gestor",
     instructions,
-    model: "anthropic/claude-sonnet-4-6",
+    model: "anthropic/claude-haiku-4-6",
     tools: [supabaseQueryTool, sendWhatsAppMediaTool, getCredentialsTool, ...mcpTools],
     toolRouting: { topK: 8 },
-    maxSteps: 30,
+    maxSteps: 150,
     memory,
   });
 
